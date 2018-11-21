@@ -213,8 +213,6 @@ def bilinear_interpolation(i):
             if (x_new[x] in x_old) and (y_new[y] in y_old):
                 temp_list.append(sensors_data_array[int(x_cor),int(y_cor)])
                 print(x_new[x],y_new[y],sensors_data_array[int(x_cor),int(y_cor)])
-            elif 
-
             else:
                 x_predictor= int(x_new[x])
                 y_predictor= int(y_new[y])
@@ -237,5 +235,4 @@ def bilinear_interpolation(i):
         interpolated_array.append(temp_list)
     return print(interpolated_array)
 
-
-bilinear_interpolation(1)
+heatmap_with_matplotlib(1, 0)
