@@ -8,6 +8,11 @@ from mpl_toolkits.mplot3d import Axes3D
 from statsmodels.formula.api import ols
 from statsmodels.stats.anova import anova_lm
 import math
+import time
+from datetime import timedelta
+
+
+
 def mochup_data(maxtime, maxx, maxy, number_of_sensor):
     """
     :param maxtime: Function will generate number of "maxtime" unique time as "0,1,2,3,4,5...."
@@ -61,6 +66,8 @@ def interpolation(i=1, t=0):
                 Columns    : x_locations
                 Data_array : interpolated temperature values
     """
+    start_time = time.monotonic()
+
     temperature_data = select_time(t)
     x_old = np.linspace(temperature_data["x_location"].min(), temperature_data["x_location"].max(),
                         (len(temperature_data["x_location"].unique().tolist())))
@@ -87,6 +94,8 @@ def interpolation(i=1, t=0):
     interpolated_df = pd.DataFrame(data=interpolated_array,
                                    index=y_new,
                                    columns=x_new)
+    end_time = time.monotonic()
+    print(timedelta(seconds=end_time - start_time))
     return interpolated_df
 
 
@@ -108,19 +117,19 @@ def heatmap_with_seaborn(i=1):
 # interactive_plot=interactive(heatmap_with_seaborn,i=(1,10,1))
 # interactive_plot
 
-def heatmap_with_matplotlib(i, t):
+def heatmap_with_matplotlib(i, t, f):
     """
 
     :param i: This function takes 'i' as input and using at interpolatin(i, t) function to create dataframe which is splitted according to 'i' value.
     :param t: This function takes 't' value as input and using at select_time(t) function to get 't' filtered dataframe.
     :return: This function returns matplotlib based heatmap. Which has time and interpolation slider on it.
     """
-    xx = (interpolation(i, t).columns.values.tolist())
-    yy = (interpolation(i, t).index.values.tolist())
+    xx = (f(i, t).columns.values.tolist())
+    yy = (f(i, t).index.values.tolist())
     fig, ax = plt.subplots()
     img = plt.imread("overlay.png")
 
-    im = ax.imshow(interpolation(i, t).values, cmap="RdBu_r")
+    im = ax.imshow(f(i, t).values, cmap="RdBu_r")
     ax.invert_yaxis()
     ax.set_xticks(np.arange(len(xx)))
     ax.set_yticks(np.arange(len(yy)))
@@ -131,7 +140,7 @@ def heatmap_with_matplotlib(i, t):
     ax.set_title("Temperature Data of Factory")
     fig.tight_layout()
     interpolation_slider = plt.axes((0.23, 0.02, 0.56, 0.03))
-    int_slider_dep = Slider(interpolation_slider, 'Interpolation Value', 1, 100, valinit=1)
+    int_slider_dep = Slider(interpolation_slider, 'Interpolation Value', 0, 20, valinit=0)
     time_slider = plt.axes((0.23, 0.06, 0.56, 0.03))
     time_slider_dep = Slider(time_slider, 'Time Value', 0, 10, valinit=0)
     ax.imshow(img, origin="lower", extent=[-0.15, 10.17, -0.2, 10.12],alpha=0.2)
@@ -139,7 +148,7 @@ def heatmap_with_matplotlib(i, t):
     def update_depth(val):
         t = int(round(time_slider_dep.val))
         i = int(round(int_slider_dep.val))
-        im.set_data(interpolation(i, t).values)
+        im.set_data(f(i, t).values)
 
     int_slider_dep.on_changed(update_depth)
     time_slider_dep.on_changed(update_depth)
@@ -185,8 +194,9 @@ def prediction_based_on_regression(t=0):
     print('\nANOVA results')
     print(anova_results)
 
-def bilinear_interpolation(i):
-    temperature_data = select_time(0)
+def bilinear_interpolation(i=0,t=0):
+    start_time = time.monotonic()
+    temperature_data = select_time(t)
     x_old = np.linspace(temperature_data["x_location"].min(), temperature_data["x_location"].max(),
                         (len(temperature_data["x_location"].unique().tolist())))
     y_old = np.linspace(temperature_data["y_location"].min(), temperature_data["y_location"].max(),
@@ -208,31 +218,49 @@ def bilinear_interpolation(i):
     for x in range(len(x_new)):
         temp_list = []
         for y in range(len(y_new)):
-            x_cor = (x / (1 + i))
-            y_cor = (y / (1 + i))
+            x_seq_distance = (temperature_data["x_location"].max() - temperature_data["x_location"].min()) / (
+                        (len(temperature_data["x_location"].unique().tolist())) - 1)
+            y_seq_distance = (temperature_data["y_location"].max() - temperature_data["y_location"].min()) / (
+                        (len(temperature_data["y_location"].unique().tolist())) - 1)
+            x_cor = (x_new[x] / x_seq_distance)
+            y_cor = (y_new[y] / y_seq_distance)
+
+            x_predictor = int(x_new[x])
+            y_predictor = int(y_new[y])
+
+            x_above_index = int(math.ceil(x_cor))
+            x_above_location = x_old[x_above_index]
+            x_below_index = int(math.trunc(x_cor))
+            x_below_location = x_old[x_below_index]
+
+            y_above_index = int(math.ceil(y_cor))
+            y_above_location = y_old[y_above_index]
+            y_below_index = int(math.trunc(y_cor))
+            y_below_location = y_old[y_below_index]
+
             if (x_new[x] in x_old) and (y_new[y] in y_old):
                 temp_list.append(sensors_data_array[int(x_cor),int(y_cor)])
-                print(x_new[x],y_new[y],sensors_data_array[int(x_cor),int(y_cor)])
+            elif (x_new[x] in x_old):
+                p = ((y_above_location-y_predictor)/(y_above_location-y_below_location)*sensors_data_array[x_below_index,y_below_index])+((y_predictor-y_below_location)/(y_above_location-y_below_location))*sensors_data_array[x_below_index,y_above_index]
+                temp_list.append(p)
+            elif (y_new[y] in y_old):
+                p = ((x_above_location - x_predictor) / (x_above_location - x_below_location) * sensors_data_array[x_below_index, y_below_index]) + ((x_predictor - x_below_location) / (x_above_location - x_below_location))*sensors_data_array[x_above_index, y_below_index]
+                temp_list.append(p)
             else:
-                x_predictor= int(x_new[x])
-                y_predictor= int(y_new[y])
-
-                x_above_index = int(math.ceil(x_cor))
-                x_above_location = x_old[x_above_index]
-                x_below_index = int(math.trunc(x_cor))
-                x_below_location = x_old[x_below_index]
-
-                y_above_index = int(math.ceil(x_cor))
-                y_above_location = y_old[y_above_index]
-                y_below_index = int(math.trunc(x_cor))
-                y_below_location = y_old[y_below_index]
                 r1=((x_above_location-x_predictor)/(x_above_location-x_below_location))*sensors_data_array[x_below_index,y_below_index]+((x_predictor-x_below_location)/(x_above_location-x_below_location))*sensors_data_array[x_above_index,y_below_index]
                 r2=((x_above_location-x_predictor)/(x_above_location-x_below_location))*sensors_data_array[x_below_index,y_above_index]+((x_predictor-x_below_location)/(x_above_location-x_below_location))*sensors_data_array[x_above_index,y_above_index]
                 p = ((y_above_location-y_predictor)/(y_above_location-y_below_location))*r1 + ((y_predictor-y_below_location)/(y_above_location-y_below_location))*r2
-                print("(({} - {})/({} - {})*{} + (({} - {})/({} - {}))*{}".format(x_above_location,x_predictor,x_above_location,x_below_location,sensors_data_array[x_below_index,y_below_index],x_predictor,x_below_location,x_above_location,x_below_location,sensors_data_array[x_above_index,y_below_index]))
-                print(x_new[x],x_cor,y_new[y],x_above_index,x_above_location,x_below_index,x_below_location)
-
+                temp_list.append(p)
         interpolated_array.append(temp_list)
-    return print(interpolated_array)
+    interpolated_df = pd.DataFrame(data=interpolated_array,
+                                       index=y_new,
+                                       columns=x_new)
+    end_time = time.monotonic()
+    print(timedelta(seconds=end_time - start_time))
+    return (interpolated_df)
+heatmap_with_matplotlib(0, 0, interpolation)
+print(bilinear_interpolation(2))
+print(interpolation(2))
 
-heatmap_with_matplotlib(1, 0)
+
+
