@@ -1,22 +1,25 @@
 import pandas as pd
-import seaborn as sns
 from scipy import interpolate
 from matplotlib.widgets import Slider
-import math
-import time
-from datetime import timedelta
 import matplotlib.pyplot as plt
-from matplotlib import cm
 import numpy as np
 from sklearn import linear_model
 from sklearn.pipeline import Pipeline
 from sklearn.linear_model import LinearRegression
 from sklearn.preprocessing import PolynomialFeatures
 import random
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import DotProduct, WhiteKernel,RBF,ConstantKernel
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.metrics import r2_score
+from sklearn.model_selection import GridSearchCV
+from sklearn.metrics import mean_squared_error, mean_absolute_error
+
+
+#Creating random datas
+
 def heat_resource_location(x1,y1,x2,y2,x3,y3,x4,y4):
     return  x1,y1,x2,y2,x3,y3,x4,y4
-
-
 
 def mochup_data(maxtime, maxx, maxy, number_of_sensor):
     """
@@ -29,7 +32,7 @@ def mochup_data(maxtime, maxx, maxy, number_of_sensor):
     Columns are "time_stamp" : '0' to 'maxtime'
                 "x_location" : '0' to 'maxx'
                 "y_location" : '0' to 'maxy'
-                "Temperature": Randomly created float data between 25.0 and 35.0
+                "Temperature": Randomly created float data between 23.5 and 32.5. There is 4 heat source and their temperature has given below.
                 "is_there_any_sensor" : It represents there is sensor as "True".
     """
     time = np.arange(0, maxtime).tolist()
@@ -82,6 +85,9 @@ def mochup_data(maxtime, maxx, maxy, number_of_sensor):
     return temperature_datas
 temperature_datas = mochup_data(100,300,300,11)
 mochup_data(100,300,300,11)
+
+#Functions for making grid and final array
+
 def select_time(t=0):
     """
     :param t: 't' value determines which time you want to work with.
@@ -96,115 +102,251 @@ def select_time(t=0):
     temperature_data = temperature_datas[temperature_datas["time_stamp"] == time_list[t]]
     return temperature_data
 
-def bilinear_interpolation(i=0, t=0):
+def create_grid(i,t):
     """
-    :param This function takes 'i' as integer parameter. Between two sequential sensor node's location, function is splitting this distance to 'i' pieces.
-            Funtion applies splitting both x and y label. Creating upscaled new labels. Based on new label calculating new values for each coordinates.
-    :return: Function returns a pandas dataframe:
-                Indexs     : y_locations
-                Columns    : x_locations
-                Data_array : interpolated temperature values
+    :param i: This function gets 'i' as a parameter to create new grid.
+    :param t: This function uses 't' at select_time(t) function to select and filter exactly this time.
+    :return:
+    temperature_data    : Function returns pandas dataframe which is filtered by given 't' value.
+    x_old               : Function returns old x label.
+    y_old               : Function returns old y label.
+    x_new               : Function returns new x label.
+    y_new               : Function returns new y label.
     """
-    start_time = time.monotonic()
-
     temperature_data = select_time(t)
     x_old = np.linspace(temperature_data["x_location"].min(), temperature_data["x_location"].max(),
                         (len(temperature_data["x_location"].unique().tolist())))
     y_old = np.linspace(temperature_data["y_location"].min(), temperature_data["y_location"].max(),
                         (len(temperature_data["y_location"].unique().tolist())))
+
+    if i == 0:
+        x_new = x_old
+        y_new = y_old
+    else:
+        x_n_points = (len(temperature_data["x_location"].unique().tolist())) + (i) * (
+                    (len(temperature_data["x_location"].unique().tolist())) - 1)
+        x_new = np.linspace(temperature_data["x_location"].min(), temperature_data["x_location"].max(), x_n_points)
+        y_n_points = (len(temperature_data["y_location"].unique().tolist())) + (i) * (
+                    (len(temperature_data["y_location"].unique().tolist())) - 1)
+        y_new = np.linspace(temperature_data["y_location"].min(), temperature_data["y_location"].max(), y_n_points)
+    return temperature_data, x_old, y_old, x_new, y_new
+
+def prediction_to_array(i,t,f,original=True):
+    """
+
+    :param i: Function takes 'i' as a input to use in create_grid(i,t) function.
+    :param t: Function takes 't' as a input to use in create_grid(i,t) function.
+    :param f: Function takes 'f' as a input to which model you want to use.
+    :param original: Function takes "original" as a boolean input.  If original is "True", measured data will be same at their location.
+                                                                    If original is "False" then value will taken from model.
+    :return: Function returns an array.
+    """
+    if f==bilinear_interpolation or f==bicubic_interpolation:
+        final_df=f(i,t)
+    else:
+        temperature_data, x_old, y_old, x_new, y_new = create_grid(i, t)
+        pivot_table = temperature_data.pivot('x_location', 'y_location', 'temperature')
+        sensors_data_array = pivot_table.values
+        x_seq_distance = (temperature_data["x_location"].max() - temperature_data["x_location"].min()) / (
+                (len(temperature_data["x_location"].unique().tolist())) - 1)
+        y_seq_distance = (temperature_data["y_location"].max() - temperature_data["y_location"].min()) / (
+                (len(temperature_data["y_location"].unique().tolist())) - 1)
+        temp_array = []
+        model = f(i,t)
+
+        for x in range(len(x_new)):
+            temp_list = []
+            for y in range(len(y_new)):
+                x_cor = (x_new[x] / x_seq_distance)
+                y_cor = (y_new[y] / y_seq_distance)
+                if original:
+                    if (x_new[x] in x_old) and (y_new[y] in y_old):
+                        temp_list.append(sensors_data_array[int(x_cor), int(y_cor)])
+                    else:
+                        temperature = model.predict(np.array([[x_new[x], y_new[y]]]).reshape(1, -1))
+                        temp_list.append(temperature.item())
+                else:
+                    temperature = model.predict(np.array([[x_new[x], y_new[y]]]).reshape(1, -1))
+                    temp_list.append(temperature.item())
+            temp_array.append(temp_list)
+        final_df = pd.DataFrame(data=temp_array,
+                                    index=y_new,
+                                    columns=x_new)
+    return final_df
+
+#Functions for predict unknown values
+
+def bilinear_interpolation(i=0, t=0):
+    """
+    :param i,t : This function takes i and t as integer input to use in create_grid(i,t) function.
+    :return: Function returns a pandas dataframe:
+                Indexs     : y_locations
+                Columns    : x_locations
+                Data_array : Bilinear interpolated temperature values
+    """
+    temperature_data, x_old, y_old, x_new, y_new= create_grid(i,t)
     xx, yy = np.meshgrid(x_old, y_old)
     pivot_table = temperature_data.pivot('x_location', 'y_location', 'temperature')
     sensors_data_array = pivot_table.values
-    if i == 1:
-        x_n_points = (len(temperature_data["x_location"].unique().tolist()))
-        x_new = np.linspace(temperature_data["x_location"].min(), temperature_data["x_location"].max(), x_n_points)
-        y_n_points = (len(temperature_data["y_location"].unique().tolist()))
-        y_new = np.linspace(temperature_data["y_location"].min(), temperature_data["y_location"].max(), y_n_points)
-    else:
-        x_n_points = (len(temperature_data["x_location"].unique().tolist())) + i * (
-                    (len(temperature_data["x_location"].unique().tolist())) - 1)
-        x_new = np.linspace(temperature_data["x_location"].min(), temperature_data["x_location"].max(), x_n_points)
-        y_n_points = (len(temperature_data["y_location"].unique().tolist())) + i * (
-                    (len(temperature_data["y_location"].unique().tolist())) - 1)
-        y_new = np.linspace(temperature_data["y_location"].min(), temperature_data["y_location"].max(), y_n_points)
-
     f = interpolate.interp2d(xx, yy, sensors_data_array, kind='linear')
     interpolated_array = f(x_new, y_new)
     interpolated_df = pd.DataFrame(data=interpolated_array,
                                    index=y_new,
                                    columns=x_new)
-    end_time = time.monotonic()
-    print(timedelta(seconds=end_time - start_time))
     return interpolated_df
+
 def bicubic_interpolation(i=0, t=0):
     """
-    :param This function takes 'i' as integer parameter. Between two sequential sensor node's location, function is splitting this distance to 'i' pieces.
-            Funtion applies splitting both x and y label. Creating upscaled new labels. Based on new label calculating new values for each coordinates.
+    :param i,t : This function takes i and t as integer input to use in create_grid(i,t) function.
     :return: Function returns a pandas dataframe:
                 Indexs     : y_locations
                 Columns    : x_locations
-                Data_array : interpolated temperature values
+                Data_array : Bicubic interpolated temperature values
     """
-    start_time = time.monotonic()
-
-    temperature_data = select_time(t)
-    x_old = np.linspace(temperature_data["x_location"].min(), temperature_data["x_location"].max(),
-                        (len(temperature_data["x_location"].unique().tolist())))
-    y_old = np.linspace(temperature_data["y_location"].min(), temperature_data["y_location"].max(),
-                        (len(temperature_data["y_location"].unique().tolist())))
+    temperature_data, x_old, y_old, x_new, y_new= create_grid(i,t)
     xx, yy = np.meshgrid(x_old, y_old)
     pivot_table = temperature_data.pivot('x_location', 'y_location', 'temperature')
     sensors_data_array = pivot_table.values
-    if i == 1:
-        x_n_points = (len(temperature_data["x_location"].unique().tolist()))
-        x_new = np.linspace(temperature_data["x_location"].min(), temperature_data["x_location"].max(), x_n_points)
-        y_n_points = (len(temperature_data["y_location"].unique().tolist()))
-        y_new = np.linspace(temperature_data["y_location"].min(), temperature_data["y_location"].max(), y_n_points)
-    else:
-        x_n_points = (len(temperature_data["x_location"].unique().tolist())) + i * (
-                    (len(temperature_data["x_location"].unique().tolist())) - 1)
-        x_new = np.linspace(temperature_data["x_location"].min(), temperature_data["x_location"].max(), x_n_points)
-        y_n_points = (len(temperature_data["y_location"].unique().tolist())) + i * (
-                    (len(temperature_data["y_location"].unique().tolist())) - 1)
-        y_new = np.linspace(temperature_data["y_location"].min(), temperature_data["y_location"].max(), y_n_points)
-
     f = interpolate.interp2d(xx, yy, sensors_data_array, kind='cubic')
     interpolated_array = f(x_new, y_new)
     interpolated_df = pd.DataFrame(data=interpolated_array,
                                    index=y_new,
                                    columns=x_new)
-    end_time = time.monotonic()
-    print(timedelta(seconds=end_time - start_time))
     return interpolated_df
 
-def heatmap_with_seaborn(i=1):
+def linear_regression(i,t,predictors=[],temperature_prediction=[]):
     """
 
-    :param i: This function take 'i' as input and using at interpolatin(i) function to create dataframe which is splitted according to 'i' value.
-    :return: This function returns seaborn based heatmap.
+    :param i, t: This function takes 'i' and 't' as an input to use in create_grid(i,t) function.
+    :param predictors: This function takes "predictors" as an input to create linear regression model.
+            Default of predictors is "[]". This means, it will taken from temperature data in this function.
+    :param temperature_prediction: This function takes "temperature_prediction" as an input to create linear regression model.
+            Default of temperature_prediction is "[]". This means, it will taken from temperature data in this function.
+    :return: Linear regression fitted model.
     """
-    z = interpolation(i)
-    plt.figure(figsize=(15, 15))
-    plt.xlabel('x_location', size=15)
-    plt.ylabel('y_location', size=15)
-    plt.title('Temperature Data of Factory ', size=15),
-    ax = sns.heatmap(z, annot=False, linewidths=0, square=True, cmap='RdBu_r', center=30)
-    ax.invert_yaxis()
-    return plt.show()
+
+    if (np.array(predictors).shape[0]) != 0 and (np.array(temperature_prediction).shape[0]) != 0:
+        predictors = predictors
+        temperature_prediction = temperature_prediction
+    else:
+        temperature_data, x_old, y_old, x_new, y_new = create_grid(i, t)
+        predictors = temperature_data[['x_location',
+                                       'y_location']].values
+        temperature_prediction = temperature_data['temperature'].values
+    regr = linear_model.LinearRegression()
+    model = regr.fit(predictors, temperature_prediction)
+    return model
+
+def poly_regression(i,t,predictors=[],temperature_prediction=[]):
+    """
+
+    :param i, t: This function takes 'i' and 't' as an input to use in create_grid(i,t) function.
+    :param predictors: This function takes "predictors" as an input to create polynomial regression model.
+            Default of predictors is "[]". This means, it will taken from temperature data in this function.
+    :param temperature_prediction: This function takes "temperature_prediction" as an input to create polynomial regression model.
+            Default of temperature_prediction is "[]". This means, it will taken from temperature data in this function.
+    :return: Polynomial regression fitted model.
+    """
+    if (np.array(predictors).shape[0]) != 0 and (np.array(temperature_prediction).shape[0]) != 0:
+        predictors = predictors
+        temperature_prediction = temperature_prediction
+    else:
+        temperature_data, x_old, y_old, x_new, y_new = create_grid(i, t)
+        predictors = temperature_data[['x_location',
+                                       'y_location']].values
+        temperature_prediction = temperature_data['temperature'].values
+    pipeline = Pipeline([
+        ('poly', PolynomialFeatures(degree=4, include_bias=False)),
+        ('linreg', LinearRegression(normalize=True))
+    ])
+    model = pipeline.fit(predictors, temperature_prediction)
+    return model
+
+def alternative_polynomial_regression(i,t,predictors=[],temperature_prediction=[]):
+    def PolynomialRegression(degree=2, **kwargs):
+        return Pipeline(PolynomialFeatures(degree), LinearRegression(**kwargs))
+
+    if (np.array(predictors).shape[0]) != 0 and (np.array(temperature_prediction).shape[0]) != 0:
+        predictors = predictors
+        temperature_prediction = temperature_prediction
+    else:
+        temperature_data, x_old, y_old, x_new, y_new = create_grid(i, t)
+        predictors = temperature_data[['x_location',
+                                       'y_location']].values
+        temperature_prediction = temperature_data['temperature'].values
+
+    param_grid = {'polynomialfeatures__degree': np.arange(20),
+                  'linearregression__fit_intercept': [True, False],
+                  'linearregression__normalize': [True, False]}
+    grid = GridSearchCV(PolynomialRegression(), param_grid, cv=7)
+    grid.fit(predictors, temperature_prediction)
+
+    model = grid.best_estimator_
+
+    return print(model)
+
+def random_forest_regression(i,t,predictors=[],temperature_prediction=[]):
+    """
+    :param i, t: This function takes 'i' and 't' as an input to use in create_grid(i,t) function.
+    :param predictors: This function takes "predictors" as an input to create random forest regression model.
+            Default of predictors is "[]". This means, it will taken from temperature data in this function.
+    :param temperature_prediction: This function takes "temperature_prediction" as an input to create random forest regression model.
+            Default of temperature_prediction is "[]". This means, it will taken from temperature data in this function.
+    :return: Random forest regression fitted model.
+    """
+    if (np.array(predictors).shape[0]) != 0 and (np.array(temperature_prediction).shape[0]) != 0:
+        predictors = predictors
+        temperature_prediction = temperature_prediction
+    else:
+        temperature_data, x_old, y_old, x_new, y_new = create_grid(i, t)
+        predictors = temperature_data[['x_location',
+                                       'y_location']].values
+        temperature_prediction = temperature_data['temperature'].values
+    rf = RandomForestRegressor(n_estimators=10, max_depth=100, random_state=20)
+    model = rf.fit(predictors, np.ravel(temperature_prediction))
+    return model
+
+def gaussian_regression(i,t,predictors=[],temperature_prediction=[]):
+    """
+    :param i, t: This function takes 'i' and 't' as an input to use in create_grid(i,t) function.
+    :param predictors: This function takes "predictors" as an input to create gaussian process regression model.
+            Default of predictors is "[]". This means, it will taken from temperature data in this function.
+    :param temperature_prediction: This function takes "temperature_prediction" as an input to create gaussian process regression model.
+            Default of temperature_prediction is "[]". This means, it will taken from temperature data in this function.
+    :return: Random gaussian process regression fitted model.
+    """
+    if (np.array(predictors).shape[0]) != 0 and (np.array(temperature_prediction).shape[0]) != 0:
+        predictors = predictors
+        temperature_prediction = temperature_prediction
+
+    else:
+        temperature_data, x_old, y_old, x_new, y_new = create_grid(i, t)
+        predictors = temperature_data[['x_location',
+                                       'y_location']].values
+        temperature_prediction = temperature_data['temperature'].values
+
+    kernel = RBF(length_scale=1.0, length_scale_bounds=(1e-1,1e3))
+    gr = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=10)
+    model = gr.fit(predictors, temperature_prediction)
+
+    return model
+
+#Plotting types/interfaces
 
 def heatmap_with_matplotlib(i, t, f):
     """
 
-    :param i: This function takes 'i' as input and using at interpolatin(i, t) function to create dataframe which is splitted according to 'i' value.
+    :param i: This function takes 'i' as input and using at prediction_to_array(i,t,f,original=True) function to create dataframe which is splitted according to 'i' value.
     :param t: This function takes 't' value as input and using at select_time(t) function to get 't' filtered dataframe.
+    :param f: This function takes 'f' as an input to define which function/model you want to use.
     :return: This function returns matplotlib based heatmap. Which has time and interpolation slider on it.
     """
-    xx = (f(i, t).columns.values.tolist())
-    yy = (f(i, t).index.values.tolist())
+    xx = (prediction_to_array(i,t,f,original=True).columns.values.tolist())
+    yy = prediction_to_array(i,t,f,original=True).index.values.tolist()
     fig, ax = plt.subplots()
     img = plt.imread("overlay.png")
 
-    im = ax.imshow(f(i, t).values, cmap="RdBu_r")
+    im = ax.imshow(prediction_to_array(i,t,f,original=True).values, cmap="coolwarm")
     ax.invert_yaxis()
     ax.set_xticks(np.arange(len(xx)))
     ax.set_yticks(np.arange(len(yy)))
@@ -223,241 +365,27 @@ def heatmap_with_matplotlib(i, t, f):
     def update_depth(val):
         t = int(round(time_slider_dep.val))
         i = int(round(int_slider_dep.val))
-        im.set_data(f(i, t).values)
+        im.set_data(prediction_to_array(i,t,f,original=True).values)
 
     int_slider_dep.on_changed(update_depth)
     time_slider_dep.on_changed(update_depth)
     return plt.show()
 
-def ddd_plot(i,t):
-    """
-
-    :param i: This function takes 'i' as input and using at interpolatin(i, t) function to create dataframe which is splitted according to 'i' value.
-    :param t: This function takes 't' value as input and using at select_time(t) function to get 't' filtered dataframe.
-    :return: This function returns 3d plot of data.
-    """
-    xx = (interpolation(i, t).columns.values.tolist())
-    yy = (interpolation(i, t).index.values.tolist())
-    z = interpolation(i, t).values
-    x,y = np.meshgrid(xx,yy)
-    fig = plt.figure()
-    ax = fig.gca(projection='3d')
-    surf = ax.plot_surface(x, y, z, cmap=plt.cm.coolwarm,
-                           rstride=1, cstride=1)
-    ax.view_init(20, -120)
-    ax.set_xlabel('xx')
-    ax.set_ylabel('yy')
-    ax.set_zlabel('zz')
-
-    return plt.show()
-
-def bilinear_interpolation(i=0,t=0):
-    start_time = time.monotonic()
-    temperature_data = select_time(t)
-    x_old = np.linspace(temperature_data["x_location"].min(), temperature_data["x_location"].max(),
-                        (len(temperature_data["x_location"].unique().tolist())))
-    y_old = np.linspace(temperature_data["y_location"].min(), temperature_data["y_location"].max(),
-                        (len(temperature_data["y_location"].unique().tolist())))
-    xx, yy = np.meshgrid(x_old, y_old)
-    pivot_table = temperature_data.pivot('x_location', 'y_location', 'temperature')
-    sensors_data_array = pivot_table.values
-    if i == 0:
-        x_new = x_old
-        y_new = y_old
-    else:
-        x_n_points = (len(temperature_data["x_location"].unique().tolist())) + (i) * (
-                    (len(temperature_data["x_location"].unique().tolist())) - 1)
-        x_new = np.linspace(temperature_data["x_location"].min(), temperature_data["x_location"].max(), x_n_points)
-        y_n_points = (len(temperature_data["y_location"].unique().tolist())) + (i) * (
-                    (len(temperature_data["y_location"].unique().tolist())) - 1)
-        y_new = np.linspace(temperature_data["y_location"].min(), temperature_data["y_location"].max(), y_n_points)
-    interpolated_array=[]
-    x_seq_distance = (temperature_data["x_location"].max() - temperature_data["x_location"].min()) / (
-            (len(temperature_data["x_location"].unique().tolist())) - 1)
-    y_seq_distance = (temperature_data["y_location"].max() - temperature_data["y_location"].min()) / (
-            (len(temperature_data["y_location"].unique().tolist())) - 1)
-    for x in range(len(x_new)):
-        temp_list = []
-        for y in range(len(y_new)):
-
-            x_cor = (x_new[x] / x_seq_distance)
-            y_cor = (y_new[y] / y_seq_distance)
-
-            x_predictor = int(x_new[x])
-            y_predictor = int(y_new[y])
-
-            x_above_index = int(math.ceil(x_cor))
-            x_above_location = x_old[x_above_index]
-            x_below_index = int(math.trunc(x_cor))
-            x_below_location = x_old[x_below_index]
-
-            y_above_index = int(math.ceil(y_cor))
-            y_above_location = y_old[y_above_index]
-            y_below_index = int(math.trunc(y_cor))
-            y_below_location = y_old[y_below_index]
-
-            if (x_new[x] in x_old) and (y_new[y] in y_old):
-                temp_list.append(sensors_data_array[int(x_cor),int(y_cor)])
-            elif (x_new[x] in x_old):
-                p = ((y_above_location-y_predictor)/(y_above_location-y_below_location)*sensors_data_array[x_below_index,y_below_index])+((y_predictor-y_below_location)/(y_above_location-y_below_location))*sensors_data_array[x_below_index,y_above_index]
-                temp_list.append(p)
-            elif (y_new[y] in y_old):
-                p = ((x_above_location - x_predictor) / (x_above_location - x_below_location) * sensors_data_array[x_below_index, y_below_index]) + ((x_predictor - x_below_location) / (x_above_location - x_below_location))*sensors_data_array[x_above_index, y_below_index]
-                temp_list.append(p)
-            else:
-                r1=((x_above_location-x_predictor)/(x_above_location-x_below_location))*sensors_data_array[x_below_index,y_below_index]+((x_predictor-x_below_location)/(x_above_location-x_below_location))*sensors_data_array[x_above_index,y_below_index]
-                r2=((x_above_location-x_predictor)/(x_above_location-x_below_location))*sensors_data_array[x_below_index,y_above_index]+((x_predictor-x_below_location)/(x_above_location-x_below_location))*sensors_data_array[x_above_index,y_above_index]
-                p = ((y_above_location-y_predictor)/(y_above_location-y_below_location))*r1 + ((y_predictor-y_below_location)/(y_above_location-y_below_location))*r2
-                temp_list.append(p)
-        interpolated_array.append(temp_list)
-    interpolated_df = pd.DataFrame(data=interpolated_array,
-                                       index=y_new,
-                                       columns=x_new)
-    end_time = time.monotonic()
-    print(timedelta(seconds=end_time - start_time))
-    return (interpolated_df)
-
-def linear_regression(i,t):
-    temperature_data=select_time(t)
-    predictors = temperature_data[['x_location',
-            'y_location']]  # here we have 2 variables for multiple regression. If you just want to use one variable for simple linear regression, then use X = df['Interest_Rate'] for example.Alternatively, you may add additional variables within the brackets
-    temperature_prediction = temperature_data['temperature']
-    x_old = np.linspace(temperature_data["x_location"].min(), temperature_data["x_location"].max(),
-                        (len(temperature_data["x_location"].unique().tolist())))
-    y_old = np.linspace(temperature_data["y_location"].min(), temperature_data["y_location"].max(),
-                        (len(temperature_data["y_location"].unique().tolist())))
-    xx, yy = np.meshgrid(x_old, y_old)
-    pivot_table = temperature_data.pivot('x_location', 'y_location', 'temperature')
-    sensors_data_array = pivot_table.values
-    x_seq_distance = (temperature_data["x_location"].max() - temperature_data["x_location"].min()) / (
-            (len(temperature_data["x_location"].unique().tolist())) - 1)
-    y_seq_distance = (temperature_data["y_location"].max() - temperature_data["y_location"].min()) / (
-            (len(temperature_data["y_location"].unique().tolist())) - 1)
-    if i == 0:
-        x_new = x_old
-        y_new = y_old
-    else:
-        x_n_points = (len(temperature_data["x_location"].unique().tolist())) + (i) * (
-                    (len(temperature_data["x_location"].unique().tolist())) - 1)
-        x_new = np.linspace(temperature_data["x_location"].min(), temperature_data["x_location"].max(), x_n_points)
-        y_n_points = (len(temperature_data["y_location"].unique().tolist())) + (i) * (
-                    (len(temperature_data["y_location"].unique().tolist())) - 1)
-        y_new = np.linspace(temperature_data["y_location"].min(), temperature_data["y_location"].max(), y_n_points)
-    regr = linear_model.LinearRegression()
-    regr.fit(predictors, temperature_prediction)
-    lin_reg_array=[]
-    for x in range(len(x_new)):
-        temp_list = []
-        for y in range(len(y_new)):
-            x_cor = (x_new[x] / x_seq_distance)
-            y_cor = (y_new[y] / y_seq_distance)
-            if (x_new[x] in x_old) and (y_new[y] in y_old):
-                temp_list.append(sensors_data_array[int(x_cor),int(y_cor)])
-            else:
-                temperature=regr.predict([[x_new[x],y_new[y]]])
-                temp_list.append(temperature.item())
-        lin_reg_array.append(temp_list)
-    lin_reg_df = pd.DataFrame(data=lin_reg_array,
-                                       index=y_new,
-                                       columns=x_new)
-    return lin_reg_df
-
-def poly_regression(i,t):
-    temperature_data=select_time(t)
-    X = temperature_data[['x_location',
-            'y_location']].values
-    Z = temperature_data['temperature'].values
-    x_old = np.linspace(temperature_data["x_location"].min(), temperature_data["x_location"].max(),
-                        (len(temperature_data["x_location"].unique().tolist())))
-    y_old = np.linspace(temperature_data["y_location"].min(), temperature_data["y_location"].max(),
-                        (len(temperature_data["y_location"].unique().tolist())))
-    xx, yy = np.meshgrid(x_old, y_old)
-    pivot_table = temperature_data.pivot('x_location', 'y_location', 'temperature')
-    sensors_data_array = pivot_table.values
-    x_seq_distance = (temperature_data["x_location"].max() - temperature_data["x_location"].min()) / (
-            (len(temperature_data["x_location"].unique().tolist())) - 1)
-    y_seq_distance = (temperature_data["y_location"].max() - temperature_data["y_location"].min()) / (
-            (len(temperature_data["y_location"].unique().tolist())) - 1)
-    if i == 0:
-        x_new = x_old
-        y_new = y_old
-    else:
-        x_n_points = (len(temperature_data["x_location"].unique().tolist())) + (i) * (
-                    (len(temperature_data["x_location"].unique().tolist())) - 1)
-        x_new = np.linspace(temperature_data["x_location"].min(), temperature_data["x_location"].max(), x_n_points)
-        y_n_points = (len(temperature_data["y_location"].unique().tolist())) + (i) * (
-                    (len(temperature_data["y_location"].unique().tolist())) - 1)
-        y_new = np.linspace(temperature_data["y_location"].min(), temperature_data["y_location"].max(), y_n_points)
-    def grid_based_prediction():
-        poly = PolynomialFeatures(degree=2)
-        X_ = poly.fit_transform(X)
-        clf = linear_model.LinearRegression()
-        clf.fit(X_, Z)
-        predict_x, predict_y = np.meshgrid(x_new,y_new)
-        predict_z = np.concatenate((predict_x.reshape(-1, 1),
-                                    predict_y.reshape(-1, 1)),
-                                   axis=1)
-        predict_x_ = poly.fit_transform(predict_z)
-        predict_data = clf.predict(predict_x_)
-        def threed():
-            fig = plt.figure(figsize=(16, 6))
-            ax1 = fig.add_subplot(121, projection='3d')
-            surf = ax1.plot_surface(predict_x, predict_y, predict_data.reshape(predict_x.shape),
-                                    rstride=1, cstride=1, cmap=cm.jet, alpha=0.5)
-            ax1.scatter(X[:, 0], X[:, 1], Z, c='b', marker='o')
-            ax1.set_xlim((300, 0))
-            ax1.set_ylim((0, 300))
-            fig.colorbar(surf, ax=ax1)
-        poly_reg_df = pd.DataFrame(data=predict_data.reshape(predict_x.shape),
-                                       index=y_new,
-                                       columns=x_new)
-        return poly_reg_df
-    pipeline = Pipeline([
-        ('poly', PolynomialFeatures(degree=5, include_bias=False)),
-        ('linreg', LinearRegression(normalize=True))
-    ])
-    pipeline.fit(X, Z)
-    poly_reg_array = []
-
-    for x in range(len(x_new)):
-        temp_list = []
-        for y in range(len(y_new)):
-            x_cor = (x_new[x] / x_seq_distance)
-            y_cor = (y_new[y] / y_seq_distance)
-            if (x_new[x] in x_old) and (y_new[y] in y_old):
-                temp_list.append(sensors_data_array[int(x_cor), int(y_cor)])
-            else:
-                temperature = pipeline.predict(np.array([[x_new[x], y_new[y]]]).reshape(1,-1))
-                temp_list.append(temperature.item())
-        poly_reg_array.append(temp_list)
-    poly_reg_df = pd.DataFrame(data=poly_reg_array,
-                                       index=y_new,
-                                       columns=x_new)
-    return poly_reg_df
-
-def gaussian_regression(i,t):
-    def kernel(a, b, param):
-        """
-        RBF Kernel
-        """
-        return
-
-
-def multiple_heatmap_with_matplotlib(i, t, f1, f2, f3, f4):
+def multiple_heatmap_with_matplotlib(i, t, f1, f2, f3, f4,original):
     """
 
     :param i: This function takes 'i' as input and using at interpolatin(i, t) function to create dataframe which is splitted according to 'i' value.
     :param t: This function takes 't' value as input and using at select_time(t) function to get 't' filtered dataframe.
     :return: This function returns matplotlib based heatmap. Which has time and interpolation slider on it.
     """
-    xx = (f1(i, t).columns.values.tolist())
-    yy = (f1(i, t).index.values.tolist())
+    xx = (prediction_to_array(i,t,f1,original=True).columns.values.tolist())
+    yy = (prediction_to_array(i,t,f1,original=True).index.values.tolist())
     img = plt.imread("overlay.png")
     fig=plt.figure()
 
     ### Figure 1 ###
     ax1=fig.add_subplot(2, 2, 1)
-    im1 = ax1.imshow(f1(i, t).values, cmap="RdBu_r")
+    im1 = ax1.imshow(prediction_to_array(i,t,f1,original=True).values, cmap="RdBu_r")
     ax1.invert_yaxis()
     ax1.set_xticks(np.arange(len(xx)))
     ax1.set_yticks(np.arange(len(yy)))
@@ -470,7 +398,7 @@ def multiple_heatmap_with_matplotlib(i, t, f1, f2, f3, f4):
 
     ### Figure 2 ###
     ax2=fig.add_subplot(2,2,2)
-    im2 = ax2.imshow(f2(i, t).values, cmap="RdBu_r")
+    im2 = ax2.imshow(prediction_to_array(i,t,f2,original=True).values, cmap="RdBu_r")
     ax2.invert_yaxis()
     ax2.set_xticks(np.arange(len(xx)))
     ax2.set_yticks(np.arange(len(yy)))
@@ -483,7 +411,7 @@ def multiple_heatmap_with_matplotlib(i, t, f1, f2, f3, f4):
 
     ### Figure 3 ###
     ax3 = fig.add_subplot(2, 2, 3)
-    im3 = ax3.imshow(f3(i, t).values, cmap="RdBu_r")
+    im3 = ax3.imshow(prediction_to_array(i,t,f3,original=True).values, cmap="RdBu_r")
     ax3.invert_yaxis()
     ax3.set_xticks(np.arange(len(xx)))
     ax3.set_yticks(np.arange(len(yy)))
@@ -496,7 +424,7 @@ def multiple_heatmap_with_matplotlib(i, t, f1, f2, f3, f4):
 
     ### Figure 4 ###
     ax4 = fig.add_subplot(2, 2, 4)
-    im4 = ax4.imshow(f4(i, t).values, cmap="RdBu_r")
+    im4 = ax4.imshow(prediction_to_array(i,t,f4,original=True), cmap="RdBu_r")
     ax4.invert_yaxis()
     ax4.set_xticks(np.arange(len(xx)))
     ax4.set_yticks(np.arange(len(yy)))
@@ -515,13 +443,172 @@ def multiple_heatmap_with_matplotlib(i, t, f1, f2, f3, f4):
     def update_depth(val):
         t = int(round(time_slider_dep.val))
         i = int(round(int_slider_dep.val))
-        im1.set_data(f1(i, t).values)
-        im2.set_data(f2(i, t).values)
-        im3.set_data(f3(i, t).values)
-        im4.set_data(f4(i, t).values)
+        im1.set_data(prediction_to_array(i,t,f1,original=True).values)
+        im2.set_data(prediction_to_array(i,t,f2,original=True).values)
+        im3.set_data(prediction_to_array(i,t,f3,original=True).values)
+        im4.set_data(prediction_to_array(i,t,f4,original=True).values)
 
     int_slider_dep.on_changed(update_depth)
     time_slider_dep.on_changed(update_depth)
     return plt.show()
 
-multiple_heatmap_with_matplotlib(0,0,bilinear_interpolation,bicubic_interpolation,linear_regression,poly_regression)
+def interface():
+    import sys
+    from PyQt5.QtWidgets import QDialog, QApplication, QPushButton, QVBoxLayout
+
+    from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+    from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
+    import matplotlib.pyplot as plt
+
+    import random
+
+    class Window(QDialog):
+        def __init__(self, parent=None):
+            super(Window, self).__init__(parent)
+
+            # a figure instance to plot on
+            self.figure = plt.figure()
+
+            # this is the Canvas Widget that displays the `figure`
+            # it takes the `figure` instance as a parameter to __init__
+            self.canvas = FigureCanvas(self.figure)
+
+            # this is the Navigation widget
+            # it takes the Canvas widget and a parent
+            self.toolbar = NavigationToolbar(self.canvas, self)
+
+            # Just some button connected to `plot` method
+            self.button = QPushButton('Plot')
+            self.button.clicked.connect(self.plot)
+
+            # set the layout
+            layout = QVBoxLayout()
+            layout.addWidget(self.toolbar)
+            layout.addWidget(self.canvas)
+            layout.addWidget(self.button)
+            self.setLayout(layout)
+
+        def plot(self):
+            xx = (bilinear_interpolation(0,0).columns.values.tolist())
+            yy = (bilinear_interpolation(0,0).index.values.tolist())
+            figure, ax = plt.subplots()
+            img = plt.imread("overlay.png")
+
+            im = ax.imshow((bilinear_interpolation(0,0).values))
+            ax.invert_yaxis()
+            ax.set_xticks(np.arange(len(xx)))
+            ax.set_yticks(np.arange(len(yy)))
+            ax.set_xticklabels(xx)
+            ax.set_yticklabels(yy)
+            plt.setp(ax.get_xticklabels(), rotation=45, ha="right",
+                     rotation_mode="anchor")
+            ax.set_title("Temperature Data of Factory")
+            figure.tight_layout()
+
+            # instead of ax.hold(False)
+            self.figure.clear()
+
+            # create an axis
+            ax = self.figure.add_subplot(111)
+
+            # refresh canvas
+            self.canvas.draw()
+
+    if __name__ == '__main__':
+        app = QApplication(sys.argv)
+
+        main = Window()
+        main.show()
+
+        sys.exit(app.exec_())
+
+def threed_plot(i,t,Original=True):
+    """
+    :param i: This function takes 'i' as input and using at interpolatin(i, t) function to create dataframe which is splitted according to 'i' value.
+    :param t: This function takes 't' value as input and using at select_time(t) function to get 't' filtered dataframe.
+    :return: This function returns 3d plot of data.
+    """
+    xx = (f(i, t).columns.values.tolist())
+    yy = (f(i, t).index.values.tolist())
+    z = f(i, t).values
+    x,y = np.meshgrid(xx,yy)
+    fig = plt.figure()
+    ax = fig.gca(projection='3d')
+    surf = ax.plot_surface(x, y, z, cmap=plt.cm.coolwarm,
+                           rstride=1, cstride=1)
+    ax.view_init(20, -120)
+    ax.set_xlabel('xx')
+    ax.set_ylabel('yy')
+    ax.set_zlabel('zz')
+
+    return plt.show()
+
+#Machine Learning
+
+def supervised_learning_test(i,t,f):
+    temperature_data, x_old, y_old, x_new, y_new = create_grid(i, t)
+    train_data = temperature_data.sample(frac=0.8, random_state=200)
+    test_Data = temperature_data.drop(train_data.index)
+    train_location= train_data[['x_location', 'y_location']].values
+    train_temperature= train_data[['temperature']].values
+
+    test_location = test_Data[['x_location', 'y_location']].values
+    test_temperature = test_Data[['temperature']].values
+
+    model = f(i,t,predictors=train_location,temperature_prediction=train_temperature)
+    r2 = r2_score(test_temperature, model.predict((test_location)))
+    return r2
+#print(prediction_to_array(5,0,random_forest_reg,True))
+
+def check_with_reference(i,t,*args):
+    temperature_data, x_old, y_old, x_new, y_new = create_grid(i, t)
+    train_data = temperature_data.sample(frac=0.9, random_state=200)
+    test_data = temperature_data.drop(train_data.index)
+
+    train_location = train_data[['x_location', 'y_location']].values
+    train_temperature = train_data[['temperature']].values
+
+    test_location = test_data[['x_location', 'y_location']].values
+    test_temperature = test_data[['temperature']].values
+    final_df = pd.DataFrame({'x_location':test_location[:,0],'y_location':test_location[:,1]})
+    final_df['validation_temperature']= test_temperature
+    for arg in args:
+        model = arg(i, t, predictors=train_location, temperature_prediction=train_temperature)
+        test_prediction = model.predict(test_location)
+        mse = mean_squared_error(test_temperature, test_prediction)
+        mae = mean_absolute_error(test_temperature, test_prediction)
+        final_df['{}_mean_squared_error'.format(arg.__name__)] = mse
+
+        final_df['{}_reference'.format(arg.__name__)] = test_prediction
+        final_df['{}_error'.format(arg.__name__)] = (final_df.validation_temperature - final_df['{}_reference'.format(arg.__name__)]).abs()
+        final_df['{}_error_percentage'.format(arg.__name__)] = final_df['{}_error'.format(arg.__name__)] / final_df.validation_temperature
+        print("Mean of {} Error Percentage :".format(arg.__name__),final_df['{}_error_percentage'.format(arg.__name__)].mean())
+        print(mse)
+    print(final_df)
+
+check_with_reference(0,0,gaussian_regression,poly_regression,linear_regression,random_forest_regression)
+
+
+def removing_sensor_nodes(i,t,f):
+    temperature_data, x_old, y_old, x_new, y_new = create_grid(i, t)
+    df = pd.DataFrame(columns=['x_location', 'y_location', 'validation_temperature', '{}_prediction'.format(f.__name__), 'error_percentage'])
+    sensor_list=[]
+    for row in range(len(temperature_data.index)):
+        test_data = temperature_data.iloc[[row]]
+        train_data = temperature_data.drop([row])
+        train_location = train_data[['x_location', 'y_location']].values
+        train_temperature = train_data[['temperature']].values
+        test_location = test_data[['x_location', 'y_location']].values
+        test_temperature = test_data[['temperature']].values
+
+        model = f(i, t, predictors=train_location, temperature_prediction=train_temperature)
+        test_prediction = model.predict(test_location)
+        error = np.absolute((test_temperature - test_prediction)/test_temperature)
+
+        sensor_list.append({'x_location': test_location[:,0], 'y_location': test_location[:,1], 'validation_temperature': test_temperature,
+                            '{}_prediction'.format(f.__name__): test_prediction, 'error_percentage': error})
+        sensor_data = df.append(sensor_list)
+        sorted_sensor_data =sensor_data.sort_values(by=['error_percentage'])
+    return print(sorted_sensor_data)
+
+multiple_heatmap_with_matplotlib(0,0,gaussian_regression,bilinear_interpolation,poly_regression,random_forest_regression,True)
