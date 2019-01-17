@@ -14,7 +14,12 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import r2_score
 from sklearn.model_selection import GridSearchCV
 from sklearn.metrics import mean_squared_error, mean_absolute_error
-
+import tensorflow as tf
+from sklearn.preprocessing import MinMaxScaler
+from keras.models import Sequential
+from keras.layers import Dense
+from sklearn.datasets import make_regression
+from sklearn.model_selection import train_test_split
 
 #Creating random datas
 
@@ -29,7 +34,8 @@ def mochup_data(maxtime, maxx, maxy, number_of_sensor):
     :param number_of_sensor: Both X label and Y label, "number_of_sensors" will be number of sensor in a single line.
     :return: According to given inputs, function will return a pandas dataframe.
 
-    Columns are "time_stamp" : '0' to 'maxtime'
+    Columns are "sensor_code" : (Example : s.0.30)
+                "time_stamp" : '0' to 'maxtime'
                 "x_location" : '0' to 'maxx'
                 "y_location" : '0' to 'maxy'
                 "Temperature": Randomly created float data between 23.5 and 32.5. There is 4 heat source and their temperature has given below.
@@ -62,28 +68,29 @@ def mochup_data(maxtime, maxx, maxy, number_of_sensor):
     print("x1",x1,"y1",y1,"x2",x2,"y2",y2,"x3",x3,"y3",y3,"x4",x4,"y4",y4,)
 
     sensor_list = []
-    df = pd.DataFrame(columns=['time_stamp', 'x_location', 'y_location', 'temperature', 'is_there_any_sensor'])
+    df = pd.DataFrame(columns=['sensor_code','time_stamp', 'x_location', 'y_location', 'temperature', 'is_there_any_sensor'])
     for t in time:
         for x in xlabel:
             for y in ylabel:
                 if x == x1 and y == y1:
-                    sensor_list.append({'time_stamp': t, 'x_location': x, 'y_location': y,
+                    sensor_list.append({'sensor_code': "S.{}.{}.".format(int(x),int(y)),'time_stamp': t, 'x_location': x, 'y_location': y,
                                     'temperature': node1[t], 'is_there_any_sensor': "True"})
                 elif x == x2 and y == y2:
-                    sensor_list.append({'time_stamp': t, 'x_location': x, 'y_location': y,
+                    sensor_list.append({'sensor_code': "S.{}.{}.".format(int(x),int(y)),'time_stamp': t, 'x_location': x, 'y_location': y,
                                         'temperature': node2[t], 'is_there_any_sensor': "True"})
                 elif x == x3 and y == y3:
-                    sensor_list.append({'time_stamp': t, 'x_location': x, 'y_location': y,
+                    sensor_list.append({'sensor_code': "S.{}.{}.".format(int(x),int(y)),'time_stamp': t, 'x_location': x, 'y_location': y,
                                         'temperature': node3[t], 'is_there_any_sensor': "True"})
                 elif x == x4 and y == y4:
-                    sensor_list.append({'time_stamp': t, 'x_location': x, 'y_location': y,
+                    sensor_list.append({'sensor_code': "S.{}.{}.".format(int(x),int(y)),'time_stamp': t, 'x_location': x, 'y_location': y,
                                         'temperature': node4[t], 'is_there_any_sensor': "True"})
                 else:
-                    sensor_list.append({'time_stamp': t, 'x_location': x, 'y_location': y,
+                    sensor_list.append({'sensor_code': "S.{}.{}.".format(int(x),int(y)),'time_stamp': t, 'x_location': x, 'y_location': y,
                                     'temperature': np.random.uniform(23.5, 32.5), 'is_there_any_sensor': "True"})
     temperature_datas = df.append(sensor_list)
     return temperature_datas
 temperature_datas = mochup_data(100,300,300,11)
+print(temperature_datas.head)
 mochup_data(100,300,300,11)
 
 #Functions for making grid and final array
@@ -101,6 +108,12 @@ def select_time(t=0):
     time_list = temperature_datas["time_stamp"].unique().tolist()
     temperature_data = temperature_datas[temperature_datas["time_stamp"] == time_list[t]]
     return temperature_data
+
+def select_sensor(n=0):
+
+    sensor_list = temperature_datas["sensor_code"].unique().tolist()
+    sensor_code=sensor_list[n]
+    return sensor_code
 
 def create_grid(i,t):
     """
@@ -143,6 +156,26 @@ def prediction_to_array(i,t,f,original=True):
     """
     if f==bilinear_interpolation or f==bicubic_interpolation:
         final_df=f(i,t)
+    elif f==tf_regression:
+        temperature_data, x_old, y_old, x_new, y_new = create_grid(i, t)
+        model=(f(i,t))
+
+        temp_df= pd.DataFrame(dict(x_location=x_new,
+                                   y_location=y_new))
+        predict_input_func = tf.estimator.inputs.pandas_input_fn(
+            x=temp_df,
+            batch_size=10,
+            num_epochs=1,
+            shuffle=False)
+        temperature_prediction=list(model.predict(predict_input_func))
+        temperature_df=pd.DataFrame(dict(x_location=x_new,
+                                         y_location=y_new,
+                                         temperature=temperature_prediction))
+        pivot_table=temperature_df.pivot('x_location','y_location','temperature')
+        final_df = pd.DataFrame(data=pivot_table,
+                                index=y_new,
+                                columns=x_new)
+
     else:
         temperature_data, x_old, y_old, x_new, y_new = create_grid(i, t)
         pivot_table = temperature_data.pivot('x_location', 'y_location', 'temperature')
@@ -367,6 +400,7 @@ def heatmap_with_matplotlib(i, t, f):
         i = int(round(int_slider_dep.val))
         im.set_data(prediction_to_array(i,t,f,original=True).values)
 
+
     int_slider_dep.on_changed(update_depth)
     time_slider_dep.on_changed(update_depth)
     return plt.show()
@@ -558,7 +592,6 @@ def supervised_learning_test(i,t,f):
     model = f(i,t,predictors=train_location,temperature_prediction=train_temperature)
     r2 = r2_score(test_temperature, model.predict((test_location)))
     return r2
-#print(prediction_to_array(5,0,random_forest_reg,True))
 
 def check_with_reference(i,t,*args):
     temperature_data, x_old, y_old, x_new, y_new = create_grid(i, t)
@@ -582,12 +615,7 @@ def check_with_reference(i,t,*args):
         final_df['{}_reference'.format(arg.__name__)] = test_prediction
         final_df['{}_error'.format(arg.__name__)] = (final_df.validation_temperature - final_df['{}_reference'.format(arg.__name__)]).abs()
         final_df['{}_error_percentage'.format(arg.__name__)] = final_df['{}_error'.format(arg.__name__)] / final_df.validation_temperature
-        print("Mean of {} Error Percentage :".format(arg.__name__),final_df['{}_error_percentage'.format(arg.__name__)].mean())
-        print(mse)
-    print(final_df)
-
-check_with_reference(0,0,gaussian_regression,poly_regression,linear_regression,random_forest_regression)
-
+    return final_df
 
 def removing_sensor_nodes(i,t,f):
     temperature_data, x_old, y_old, x_new, y_new = create_grid(i, t)
@@ -607,8 +635,149 @@ def removing_sensor_nodes(i,t,f):
 
         sensor_list.append({'x_location': test_location[:,0], 'y_location': test_location[:,1], 'validation_temperature': test_temperature,
                             '{}_prediction'.format(f.__name__): test_prediction, 'error_percentage': error})
-        sensor_data = df.append(sensor_list)
-        sorted_sensor_data =sensor_data.sort_values(by=['error_percentage'])
-    return print(sorted_sensor_data)
+    sensor_data = df.append(sensor_list)
+    sorted_sensor_data =sensor_data.sort_values(by=['error_percentage'])
+    return sorted_sensor_data
 
-multiple_heatmap_with_matplotlib(0,0,gaussian_regression,bilinear_interpolation,poly_regression,random_forest_regression,True)
+#Deep Learning
+
+def tf_regression(i,t,predictors=[],temperature_prediction=[]):
+    temperature_data, x_old, y_old, x_new, y_new = create_grid(i, t)
+    predictors = temperature_data[['x_location',
+                                       'y_location']]
+    temperature_prediction = temperature_data['temperature']
+
+    scaler = MinMaxScaler()
+    scaler.fit(predictors)
+    scaled_predictors = pd.DataFrame(data=scaler.transform(predictors), columns=predictors.columns, index=predictors.index)
+
+
+    x_cor_feature = tf.feature_column.numeric_column('x_location')
+    y_cor_feature = tf.feature_column.numeric_column('y_location')
+    feat_cols= [x_cor_feature,y_cor_feature]
+    input_func = tf.estimator.inputs.pandas_input_fn(x=scaled_predictors, y=temperature_prediction, batch_size=10, num_epochs=1000,
+                                                     shuffle=True)
+    model = tf.estimator.DNNRegressor(hidden_units=[6, 6, 6], feature_columns=feat_cols)
+    model.train(input_fn=input_func, steps=1000)
+
+    return model
+
+
+
+
+
+def keras_prediction(i,t,predictors=[],temperature_prediction=[]):
+
+    if (np.array(predictors).shape[0]) != 0 and (np.array(temperature_prediction).shape[0]) != 0:
+        predictors = predictors
+        temperature_prediction = temperature_prediction
+    else:
+        temperature_data, x_old, y_old, x_new, y_new = create_grid(i, t)
+        predictors = temperature_data[['x_location',
+                                       'y_location']].values
+        temperature_prediction = temperature_data['temperature'].values
+    model = Sequential()
+    model.add(Dense(12, input_dim=8, activation='relu'))
+    model.add(Dense(8, activation='relu'))
+    model.add(Dense(1, activation='sigmoid'))
+    model.compile(loss='binary_crossentropy', optimizer='adam', metrics=['accuracy'])
+    model.fit(predictors, temperature_prediction, epochs=150, batch_size=10, verbose=2)
+    predictions = model.predict(predictors)
+
+    return model
+
+#Time Series Analsys
+
+def timely_prediction_to_series(n,f):
+    node_predictors,node_prediction,model=f(n)
+    series=model.predict(node_predictors)
+    return series
+
+def timely_linear_regression(n,node_predictors=[],node_prediction=[]):
+
+    if (np.array(node_predictors).shape[0]) != 0 and (np.array(node_prediction).shape[0]) != 0:
+        node_predictors = node_predictors
+        node_prediction = node_prediction
+    else:
+        sensor_code=select_sensor(n)
+        temperature_data=temperature_datas.pivot('time_stamp','sensor_code','temperature')
+        node_prediction= temperature_data[sensor_code].values
+        node_predictors=temperature_data.drop(columns=['{}'.format(sensor_code)]).values
+
+    regr=linear_model.LinearRegression()
+    model=regr.fit(node_predictors,node_prediction)
+    return node_predictors, node_prediction, model
+
+def timely_random_forest_regression(n,node_predictors=[],node_prediction=[]):
+
+    if (np.array(node_predictors).shape[0]) != 0 and (np.array(node_prediction).shape[0]) != 0:
+        node_predictors = node_predictors
+        node_prediction = node_prediction
+    else:
+        sensor_code=select_sensor(n)
+        temperature_data=temperature_datas.pivot('time_stamp','sensor_code','temperature')
+        node_prediction= temperature_data[sensor_code].values
+        node_predictors=temperature_data.drop(columns=['{}'.format(sensor_code)]).values
+
+    rf = RandomForestRegressor(n_estimators=10, max_depth=100, random_state=20)
+    model = rf.fit(node_predictors, np.ravel(node_prediction))
+    return node_predictors, node_prediction, model
+
+def timely_gaussian_regression(n,node_predictors=[],node_prediction=[]):
+
+    if (np.array(node_predictors).shape[0]) != 0 and (np.array(node_prediction).shape[0]) != 0:
+        node_predictors = node_predictors
+        node_prediction = node_prediction
+    else:
+        sensor_code=select_sensor(n)
+        temperature_data=temperature_datas.pivot('time_stamp','sensor_code','temperature')
+        node_prediction= temperature_data[sensor_code].values
+        node_predictors=temperature_data.drop(columns=['{}'.format(sensor_code)]).values
+
+    kernel = RBF(length_scale=1.0, length_scale_bounds=(1e-1, 1e3))
+    gr = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=10)
+    model = gr.fit(node_predictors, node_prediction)
+    return node_predictors, node_prediction, model
+
+def timely_polynomial_regression(n,node_predictors=[],node_prediction=[]):
+
+    if (np.array(node_predictors).shape[0]) != 0 and (np.array(node_prediction).shape[0]) != 0:
+        node_predictors = node_predictors
+        node_prediction = node_prediction
+    else:
+        sensor_code=select_sensor(n)
+        temperature_data=temperature_datas.pivot('time_stamp','sensor_code','temperature')
+        node_prediction= temperature_data[sensor_code].values
+        node_predictors=temperature_data.drop(columns=['{}'.format(sensor_code)]).values
+
+    pipeline = Pipeline([
+        ('poly', PolynomialFeatures(degree=4, include_bias=False)),
+        ('linreg', LinearRegression(normalize=True))
+    ])
+    model = pipeline.fit(node_predictors, node_prediction)
+    return node_predictors, node_prediction, model
+
+def timely_supervised_learning_test(n,*args):
+    sensor_code = select_sensor(n)
+    temperature_data = temperature_datas.pivot('time_stamp', 'sensor_code', 'temperature')
+    train_data = temperature_data.sample(frac=0.8, random_state=200)
+    test_Data = temperature_data.drop(train_data.index)
+    node_prediction_train = train_data[sensor_code].values
+    node_predictors_train=train_data.drop(columns=['{}'.format(sensor_code)]).values
+
+    node_validation_test = test_Data[sensor_code].values
+    node_predictors_test = test_Data.drop(columns=['{}'.format(sensor_code)]).values
+    final_df=pd.DataFrame({'validation_temperature':node_validation_test})
+
+    for arg in args:
+        node_predictors, node_prediction, model = arg(n, node_predictors=node_predictors_train, node_prediction=node_prediction_train)
+        predicted_temperatures=model.predict((node_predictors_test))
+        final_df['{}_reference'.format(arg.__name__)] = predicted_temperatures
+        final_df['{}_error'.format(arg.__name__)] = (final_df.validation_temperature - final_df['{}_reference'.format(arg.__name__)]).abs()
+        final_df['{}_error_percentage'.format(arg.__name__)] = final_df['{}_error'.format(
+            arg.__name__)] / final_df.validation_temperature
+        final_df['{}_accuracy_percentage'.format(arg.__name__)] = 1-final_df['{}_error'.format(
+            arg.__name__)] / final_df.validation_temperature
+    return final_df
+
+(timely_supervised_learning_test(0,timely_gaussian_regression,timely_linear_regression,timely_random_forest_regression))
