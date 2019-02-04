@@ -5,11 +5,12 @@ import matplotlib.pyplot as plt
 import numpy as np
 from sklearn import linear_model
 from sklearn.pipeline import Pipeline
-from sklearn.linear_model import LinearRegression
+from sklearn.linear_model import LinearRegression,LogisticRegression
+from sklearn.tree import DecisionTreeClassifier
 from sklearn.preprocessing import PolynomialFeatures
 import random
 from sklearn.gaussian_process import GaussianProcessRegressor
-from sklearn.gaussian_process.kernels import DotProduct, WhiteKernel,RBF,ConstantKernel
+from sklearn.gaussian_process.kernels import RBF
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import r2_score
 from sklearn.model_selection import GridSearchCV
@@ -18,8 +19,7 @@ import tensorflow as tf
 from sklearn.preprocessing import MinMaxScaler
 from keras.models import Sequential
 from keras.layers import Dense
-from sklearn.datasets import make_regression
-from sklearn.model_selection import train_test_split
+import datetime
 
 #Creating random datas
 
@@ -114,6 +114,7 @@ def select_sensor(n=0):
     sensor_list = temperature_datas["sensor_code"].unique().tolist()
     sensor_code=sensor_list[n]
     return sensor_code
+select_sensor(n=0)
 
 def create_grid(i,t):
     """
@@ -156,7 +157,7 @@ def prediction_to_array(i,t,f,original=True):
     """
     if f==bilinear_interpolation or f==bicubic_interpolation:
         final_df=f(i,t)
-    elif f==tf_regression:
+    elif f=="tf_regression":
         temperature_data, x_old, y_old, x_new, y_new = create_grid(i, t)
         model=(f(i,t))
 
@@ -270,6 +271,29 @@ def linear_regression(i,t,predictors=[],temperature_prediction=[]):
     model = regr.fit(predictors, temperature_prediction)
     return model
 
+def logistic_regression(i,t,predictors=[],temperature_prediction=[]):
+    """
+
+    :param i, t: This function takes 'i' and 't' as an input to use in create_grid(i,t) function.
+    :param predictors: This function takes "predictors" as an input to create linear regression model.
+            Default of predictors is "[]". This means, it will taken from temperature data in this function.
+    :param temperature_prediction: This function takes "temperature_prediction" as an input to create linear regression model.
+            Default of temperature_prediction is "[]". This means, it will taken from temperature data in this function.
+    :return: Linear regression fitted model.
+    """
+
+    if (np.array(predictors).shape[0]) != 0 and (np.array(temperature_prediction).shape[0]) != 0:
+        predictors = predictors
+        temperature_prediction = temperature_prediction
+    else:
+        temperature_data, x_old, y_old, x_new, y_new = create_grid(i, t)
+        predictors = temperature_data[['x_location',
+                                       'y_location']].values
+        temperature_prediction = temperature_data['temperature'].values
+    regr = linear_model.LogisticRegression()
+    model = regr.fit(predictors, temperature_prediction)
+    return model
+
 def poly_regression(i,t,predictors=[],temperature_prediction=[]):
     """
 
@@ -380,6 +404,7 @@ def heatmap_with_matplotlib(i, t, f):
     img = plt.imread("overlay.png")
 
     im = ax.imshow(prediction_to_array(i,t,f,original=True).values, cmap="coolwarm")
+
     ax.invert_yaxis()
     ax.set_xticks(np.arange(len(xx)))
     ax.set_yticks(np.arange(len(yy)))
@@ -388,12 +413,18 @@ def heatmap_with_matplotlib(i, t, f):
     plt.setp(ax.get_xticklabels(), rotation=45, ha="right",
              rotation_mode="anchor")
     ax.set_title("Temperature Data of Factory")
+
     fig.tight_layout()
     interpolation_slider = plt.axes((0.23, 0.02, 0.56, 0.03))
     int_slider_dep = Slider(interpolation_slider, 'Scaling Value', 0, 10, valinit=0)
     time_slider = plt.axes((0.23, 0.06, 0.56, 0.03))
     time_slider_dep = Slider(time_slider, 'Time Value', 0, 10, valinit=0)
     ax.imshow(img, origin="lower", extent=[-0.15, 10.17, -0.2, 10.12],alpha=0.2)
+    from mpl_toolkits.axes_grid1 import make_axes_locatable
+    divider = make_axes_locatable(ax)
+    cax = divider.append_axes("right", size="5%", pad=0.05)
+
+    plt.colorbar(im, cax=cax)
 
     def update_depth(val):
         t = int(round(time_slider_dep.val))
@@ -405,7 +436,7 @@ def heatmap_with_matplotlib(i, t, f):
     time_slider_dep.on_changed(update_depth)
     return plt.show()
 
-def multiple_heatmap_with_matplotlib(i, t, f1, f2, f3, f4,original):
+def multiple_heatmap_with_matplotlib(i, t, f1, f2, f3, f4,original=True):
     """
 
     :param i: This function takes 'i' as input and using at interpolatin(i, t) function to create dataframe which is splitted according to 'i' value.
@@ -482,6 +513,7 @@ def multiple_heatmap_with_matplotlib(i, t, f1, f2, f3, f4,original):
         im3.set_data(prediction_to_array(i,t,f3,original=True).values)
         im4.set_data(prediction_to_array(i,t,f4,original=True).values)
 
+    
     int_slider_dep.on_changed(update_depth)
     time_slider_dep.on_changed(update_depth)
     return plt.show()
@@ -556,7 +588,7 @@ def interface():
 
         sys.exit(app.exec_())
 
-def threed_plot(i,t,Original=True):
+def threed_plot(i,t,f,Original=True):
     """
     :param i: This function takes 'i' as input and using at interpolatin(i, t) function to create dataframe which is splitted according to 'i' value.
     :param t: This function takes 't' value as input and using at select_time(t) function to get 't' filtered dataframe.
@@ -566,14 +598,28 @@ def threed_plot(i,t,Original=True):
     yy = (f(i, t).index.values.tolist())
     z = f(i, t).values
     x,y = np.meshgrid(xx,yy)
-    fig = plt.figure()
-    ax = fig.gca(projection='3d')
-    surf = ax.plot_surface(x, y, z, cmap=plt.cm.coolwarm,
-                           rstride=1, cstride=1)
-    ax.view_init(20, -120)
-    ax.set_xlabel('xx')
-    ax.set_ylabel('yy')
-    ax.set_zlabel('zz')
+    ax = plt.axes(projection="3d")
+    ax.plot_trisurf(xx, yy, z,
+                    cmap='viridis', edgecolor='none')
+
+    return plt.show()
+
+def random_chose_sensor_show_line_plot(q):
+    final_array=[]
+    sensor_list = temperature_datas["sensor_code"].unique().tolist()
+    temperature_data = temperature_datas.pivot('time_stamp', 'sensor_code', 'temperature')
+    time_stamp=(temperature_datas['time_stamp'].unique().tolist())
+    for i in range(q):
+        sensor_number=list(range(len(sensor_list)))
+        n = np.random.choice(sensor_number)
+        sensor_number.remove(n)
+        sensor_code = sensor_list[n]
+        temp_series = temperature_data[sensor_code].values
+        final_array.append(temp_series)
+        plt.plot(time_stamp,temp_series)
+        plt.legend()
+    plt.xlabel('Time')
+    plt.ylabel('Temperature (°C)')
 
     return plt.show()
 
@@ -610,13 +656,17 @@ def check_with_reference(i,t,*args):
         test_prediction = model.predict(test_location)
         mse = mean_squared_error(test_temperature, test_prediction)
         mae = mean_absolute_error(test_temperature, test_prediction)
-        final_df['{}_mean_squared_error'.format(arg.__name__)] = mse
-
         final_df['{}_reference'.format(arg.__name__)] = test_prediction
         final_df['{}_error'.format(arg.__name__)] = (final_df.validation_temperature - final_df['{}_reference'.format(arg.__name__)]).abs()
         final_df['{}_error_percentage'.format(arg.__name__)] = final_df['{}_error'.format(arg.__name__)] / final_df.validation_temperature
+        final_df['{}_accuracy_percentage'.format(arg.__name__)] = 1 - final_df['{}_error'.format(
+            arg.__name__)] / final_df.validation_temperature
+    for arg in args:
+        print('{}_accuracy_mean ='.format(arg.__name__), final_df['{}_accuracy_percentage'.format(arg.__name__)].mean())
     return final_df
 
+
+check_with_reference(5,5,linear_regression,gaussian_regression,poly_regression,random_forest_regression)
 def removing_sensor_nodes(i,t,f):
     temperature_data, x_old, y_old, x_new, y_new = create_grid(i, t)
     df = pd.DataFrame(columns=['x_location', 'y_location', 'validation_temperature', '{}_prediction'.format(f.__name__), 'error_percentage'])
@@ -661,10 +711,6 @@ def tf_regression(i,t,predictors=[],temperature_prediction=[]):
     model.train(input_fn=input_func, steps=1000)
 
     return model
-
-
-
-
 
 def keras_prediction(i,t,predictors=[],temperature_prediction=[]):
 
@@ -778,6 +824,22 @@ def timely_supervised_learning_test(n,*args):
             arg.__name__)] / final_df.validation_temperature
         final_df['{}_accuracy_percentage'.format(arg.__name__)] = 1-final_df['{}_error'.format(
             arg.__name__)] / final_df.validation_temperature
+    for arg in args:
+        print('{}_accuracy_mean ='.format(arg.__name__),final_df['{}_accuracy_percentage'.format(arg.__name__)].mean())
     return final_df
 
-(timely_supervised_learning_test(0,timely_gaussian_regression,timely_linear_regression,timely_random_forest_regression))
+def timely_logistic_regression(n, node_predictors=[],node_prediction=[]):
+    if (np.array(node_predictors).shape[0]) != 0 and (np.array(node_prediction).shape[0]) != 0:
+        node_predictors = node_predictors
+        node_prediction = node_prediction
+    else:
+        sensor_code=select_sensor(n)
+        temperature_data=temperature_datas.pivot('time_stamp','sensor_code','temperature')
+        node_prediction= temperature_data[sensor_code].values
+        node_predictors=temperature_data.drop(columns=['{}'.format(sensor_code)]).values
+
+    regr=linear_model.LogisticRegression()
+    model=regr.fit(node_predictors,node_prediction)
+    return node_predictors, node_prediction, model
+
+print(timely_supervised_learning_test(3,timely_linear_regression,timely_gaussian_regression,timely_random_forest_regression))
