@@ -1,4 +1,4 @@
-from predicting_functions import polynomial_regression_prediction, linear_regression_prediction, random_forest_regression,train_test_splits, neural_network
+from predicting_functions import polynomial_regression_prediction, linear_regression_prediction, random_forest_regression,train_test_splits, sc_2_neural_network
 from plotting_functions import prediction_to_plot
 import math
 import pandas as pd
@@ -112,5 +112,5 @@ prediction_to_plot(polynomial_regression_prediction, removed_sensor_node, train_
 random_forest_regression(train_x,train_y,test_x,test_y)
 prediction_to_plot(random_forest_regression, removed_sensor_node, train_x, train_y, test_x, test_y, train_time, test_time)
 
-neural_network(train_x,train_y,test_x,test_y)
-prediction_to_plot(neural_network, removed_sensor_node, train_x, train_y, test_x, test_y, train_time, test_time)
+sc_2_neural_network(train_x,train_y,test_x,test_y)
+prediction_to_plot(sc_2_neural_network, removed_sensor_node, train_x, train_y, test_x, test_y, train_time, test_time)

@@ -63,7 +63,29 @@ def random_forest_regression(train_x, train_y, test_x, test_y):
     rmse = math.sqrt(mean_squared_error(test_y, prediction))
     return prediction, r2, rmse
 
-def neural_network(train_x, train_y, test_x, test_y):
+def sc_1_neural_network(train_x, train_y, test_x, test_y):
+
+    scaler_train_x,scaler_train_y,scaler_test_x,scaler_test_y = MinMaxScaler(),MinMaxScaler(),MinMaxScaler(),MinMaxScaler()
+    scaler_train_x.fit(train_x)
+    scaler_test_x.fit(test_x)
+    scaler_train_y.fit(np.array(train_y).reshape(len(train_y),-1))
+    scaler_test_y.fit(np.array(test_y).reshape(len(test_y),-1))
+    sc_train_x= scaler_train_x.transform(train_x)
+    sc_train_y = scaler_train_y.transform(np.array(train_y).reshape(len(train_y),-1))
+    sc_test_x = scaler_test_x.transform(test_x)
+    sc_test_y = scaler_test_y.transform(np.array(test_y).reshape(len(test_y),-1))
+    model = Sequential()
+    model.add(Dense(12, input_dim=1, activation='relu'))
+    model.add(Dense(8, activation='relu'))
+    model.add(Dense(1, activation='sigmoid'))
+    model.compile(loss='mse', optimizer='adam', metrics=['accuracy'])
+    model.fit(sc_train_x, sc_train_y, validation_data=(sc_test_x, sc_test_y), epochs=150, batch_size=10)
+    prediction = model.predict(test_x)
+    r2 = r2_score(test_y,prediction)
+    rmse = math.sqrt(mean_squared_error(test_y,prediction))
+    return prediction, r2, rmse
+
+def sc_2_neural_network(train_x, train_y, test_x, test_y):
 
     scaler_train_x,scaler_train_y,scaler_test_x,scaler_test_y = MinMaxScaler(),MinMaxScaler(),MinMaxScaler(),MinMaxScaler()
     scaler_train_x.fit(train_x)
